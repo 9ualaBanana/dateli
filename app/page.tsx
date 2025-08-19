@@ -3,7 +3,7 @@
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import { format, addMonths, subMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, parseISO } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Sparkles, ThumbsUp, ThumbsDown, Calendar as CalendarIcon, Clock, MapPin, CheckCheck, X, ChevronLeft, ChevronRight, Link as LinkIcon, Edit } from "lucide-react";
+import { Plus, Sparkles, ThumbsUp, ThumbsDown, Calendar as CalendarIcon, Clock, MapPin, CheckCheck, X, ChevronLeft, ChevronRight, Link as LinkIcon, Edit, Trash2 } from "lucide-react";
 
 // shadcn/ui imports (assumed available in the project)
 import { Button } from "@/components/ui/button";
@@ -250,7 +250,7 @@ function MonthCalendar({ currentMonth, setCurrentMonth, events, suggestions, ide
 // COMPONENT: IdeaCard (shared between suggestions & upcoming)
 // -----------------------------------------------------------------------------
 
-function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea, onEditSuggestion, onOpenSuggest, selectedDayISO }: {
+function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea, onEditSuggestion, onOpenSuggest, selectedDayISO, onDeleteIdea, onDeleteSuggestion, eventId, onDeleteEvent }: {
   suggestion?: Suggestion;
   idea?: Idea;
   partnerVote?: (sid: string, partnerId: string, vote: "up" | "down") => void;
@@ -259,6 +259,11 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
   onEditSuggestion?: (suggestionId: string) => void;
   onOpenSuggest?: (ideaId: string, dateIso?: string) => void;
   selectedDayISO?: string | null;
+  onDeleteIdea?: (ideaId: string) => void;
+  onDeleteSuggestion?: (suggestionId: string) => void;
+  eventId?: string;
+  onDeleteEvent?: (eventId: string) => void;
+  
 }) {
   const upCount = suggestion ? Object.values(suggestion.votes).filter((v) => v === "up").length : 0;
   const downCount = suggestion ? Object.values(suggestion.votes).filter((v) => v === "down").length : 0;
@@ -275,12 +280,8 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
         <div className="min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="font-medium truncate">{info.title}</div>
-            {idea && onEditIdea && (
-              <Button size="sm" variant="ghost" className="ml-2" onClick={() => onEditIdea(idea.id)}>
-                <Edit className="h-4 w-4" />
-              </Button>
-            )}
           </div>
+
           {info.description && (
             <div className="text-sm text-muted-foreground mt-1">{info.description}</div>
           )}
@@ -330,27 +331,61 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
               ))}
             </div>
 
-            <div className="pt-2 flex gap-2">
-              <Button size="sm" variant="ghost" className="w-full" onClick={() => onEditSuggestion?.(suggestion.id)}>
-                <Edit className="mr-2 h-4 w-4" /> Edit
+            <div className="pt-2 flex">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="w-1/2 rounded-none first:rounded-l-md"
+                onClick={() => onEditSuggestion?.(suggestion.id)}
+              >
+                <Edit className="h-4 w-5" />
               </Button>
+              {onDeleteSuggestion && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="w-1/2 rounded-none last:rounded-r-md"
+                  onClick={() => onDeleteSuggestion(suggestion.id)}
+                >
+                  <Trash2 className="h-4 w-5" />
+                </Button>
+              )}
             </div>
 
-            <div className="pt-2 border-t">
+            {<div className="pt-2 border-t">
               <Button size="sm" className="w-full" onClick={() => acceptSuggestion(suggestion.id)}>
                 <CheckCheck className="mr-2 h-4 w-4" /> Accept
               </Button>
-            </div>
+            </div>}
           </div>
-        ) : idea ? (
+        ) : idea && !eventId ? (
           <div className="shrink-0 flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <Button size="sm" variant="outline" onClick={() => onOpenSuggest?.(idea.id, selectedDayISO ?? format(new Date(), "yyyy-MM-dd"))}>
                 <Clock className="mr-2 h-4 w-4" /> Suggest
               </Button>
+              {onEditIdea && (
+                <Button size="sm" variant="ghost" onClick={() => onEditIdea(idea.id)}>
+                  <Edit className="h-4 w-4" />
+                </Button>
+              )}
+              {!suggestion && onDeleteIdea && (
+                <Button size="sm" variant="ghost" onClick={() => onDeleteIdea(idea.id)} title="Delete idea">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
         ) : null}
+
+        {/* Event-level delete (available for upcoming events) */}
+        {eventId && onDeleteEvent && (
+          <div className="shrink-0 flex flex-col gap-2">
+            <Button size="sm" variant="ghost" onClick={() => onDeleteEvent(eventId)} title="Delete event">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
 
       {suggestion && (
@@ -400,7 +435,7 @@ function TagEditor({ value, setValue, placeholder = 'Add tag' }: { value: string
 }
 
 
-function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTitle, setManualTitle, manualDescription, setManualDescription, manualPlace, setManualPlace, manualTags, setManualTags, selectedDayISO, onEditIdea }: {
+function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTitle, setManualTitle, manualDescription, setManualDescription, manualPlace, setManualPlace, manualTags, setManualTags, selectedDayISO, onEditIdea, onDeleteIdea }: {
   ideas: Idea[];
   onAddManual: () => void;
   onLoadAiIdeas: () => void;
@@ -415,6 +450,7 @@ function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTi
   setManualTags: (s: string[]) => void;
   selectedDayISO: string | null;
   onEditIdea?: (ideaId: string) => void;
+  onDeleteIdea?: (ideaId: string) => void;
 }) {
   return (
     <Card className="xl:col-span-1">
@@ -437,7 +473,7 @@ function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTi
           <TabsContent value="list" className="mt-3">
             <div className="flex flex-col gap-3">
               {ideas.map((idea) => (
-                <IdeaCard key={idea.id} idea={idea} onEditIdea={onEditIdea} onOpenSuggest={onOpenSuggest} selectedDayISO={selectedDayISO} />
+                <IdeaCard key={idea.id} idea={idea} onEditIdea={onEditIdea} onOpenSuggest={onOpenSuggest} selectedDayISO={selectedDayISO} onDeleteIdea={onDeleteIdea} />
               ))}
             </div>
           </TabsContent>
@@ -466,7 +502,7 @@ function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTi
 // COMPONENT: SuggestionsPanel
 // -----------------------------------------------------------------------------
 
-function SuggestionsPanel({ ideas, pendingSuggestions, partnerVote, acceptSuggestion, selectedDateLabel, openSuggest, setOpenSuggest, form, setForm, createSuggestion, onEditIdea, onEditSuggestion }: {
+function SuggestionsPanel({ ideas, pendingSuggestions, partnerVote, acceptSuggestion, selectedDateLabel, openSuggest, setOpenSuggest, form, setForm, createSuggestion, onEditIdea, onEditSuggestion, onDeleteIdea, onDeleteSuggestion }: {
   ideas: Idea[];
   pendingSuggestions: Suggestion[];
   partnerVote: (sid: string, partnerId: string, vote: "up" | "down") => void;
@@ -479,6 +515,8 @@ function SuggestionsPanel({ ideas, pendingSuggestions, partnerVote, acceptSugges
   createSuggestion: () => void;
   onEditIdea?: (ideaId: string) => void;
   onEditSuggestion?: (suggestionId: string) => void;
+  onDeleteIdea?: (ideaId: string) => void;
+  onDeleteSuggestion?: (suggestionId: string) => void;
 }) {
   return (
     <Card className="xl:col-span-1">
@@ -584,7 +622,7 @@ function SuggestionsPanel({ ideas, pendingSuggestions, partnerVote, acceptSugges
             </div>
           )}
 
-          {pendingSuggestions.map((s) => {
+      {pendingSuggestions.map((s) => {
             const idea = findIdea(ideas, s.ideaId);
             return (
               <IdeaCard
@@ -595,6 +633,8 @@ function SuggestionsPanel({ ideas, pendingSuggestions, partnerVote, acceptSugges
                 acceptSuggestion={acceptSuggestion}
                 onEditIdea={onEditIdea}
                 onEditSuggestion={onEditSuggestion}
+                onDeleteIdea={onDeleteIdea}
+                onDeleteSuggestion={onDeleteSuggestion}
               />
             );
           })}
@@ -608,7 +648,7 @@ function SuggestionsPanel({ ideas, pendingSuggestions, partnerVote, acceptSugges
 // COMPONENT: UpcomingList
 // -----------------------------------------------------------------------------
 
-function UpcomingList({ ideas, suggestions, events }: { ideas: Idea[]; suggestions: Suggestion[]; events: EventItem[] }) {
+function UpcomingList({ ideas, suggestions, events, onDeleteIdea, onDeleteSuggestion, onDeleteEvent }: { ideas: Idea[]; suggestions: Suggestion[]; events: EventItem[]; onDeleteIdea?: (id: string) => void; onDeleteSuggestion?: (sid: string) => void; onDeleteEvent?: (eid: string) => void }) {
   // Expand events into their suggestion + idea for display
   const expanded = useMemo(() => {
     return events.map((ev) => {
@@ -631,7 +671,7 @@ function UpcomingList({ ideas, suggestions, events }: { ideas: Idea[]; suggestio
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {upcoming.map(({ ev, s, i }) => (
-          <IdeaCard key={ev.id} suggestion={s} idea={i} />
+          <IdeaCard key={ev.id} suggestion={s} idea={i} onDeleteIdea={onDeleteIdea} onDeleteSuggestion={onDeleteSuggestion} eventId={ev.id} onDeleteEvent={onDeleteEvent} />
         ))}
         {upcoming.length === 0 && (
           <div className="text-sm text-muted-foreground">No upcoming events.</div>
@@ -827,6 +867,44 @@ export default function PartnershipCalendarUI() {
     })();
   };
 
+  // Delete idea (client)
+  const deleteIdea = (ideaId: string) => {
+    (async ()=>{
+      try{
+        const res = await fetch('/api/ideas', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: ideaId }) });
+        if (!res.ok) throw new Error('delete failed');
+        setIdeas((prev) => prev.filter(i => i.id !== ideaId));
+        // also remove suggestions referencing this idea
+        setSuggestions((prev) => prev.filter(s => s.ideaId !== ideaId));
+        // and events referencing those suggestions
+        setEvents((prev) => prev.filter(ev => {
+          const s = suggestions.find(x => x.id === ev.suggestionId);
+          return s ? s.ideaId !== ideaId : true;
+        }));
+      }catch(e){console.error(e)}
+    })();
+  };
+
+  const deleteSuggestion = (sid: string) => {
+    (async ()=>{
+      try{
+        const res = await fetch('/api/suggestions', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: sid }) });
+        if (!res.ok) throw new Error('delete failed');
+        setSuggestions((prev) => prev.filter(s => s.id !== sid));
+      }catch(e){console.error(e)}
+    })();
+  };
+
+  const deleteEvent = (eid: string) => {
+    (async ()=>{
+      try{
+        const res = await fetch('/api/events', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: eid }) });
+        if (!res.ok) throw new Error('delete failed');
+        setEvents((prev) => prev.filter(ev => ev.id !== eid));
+      }catch(e){console.error(e)}
+    })();
+  };
+
   // Open edit suggestion modal
   const openEditSuggestion = (sid: string) => {
     const s = findSuggestion(suggestions, sid);
@@ -938,7 +1016,7 @@ export default function PartnershipCalendarUI() {
           </div>
 
           <div className="rounded-2xl border p-3 max-h-80 overflow-auto">
-            <UpcomingList events={events} suggestions={suggestions} ideas={ideas} />
+            <UpcomingList events={events} suggestions={suggestions} ideas={ideas} onDeleteIdea={deleteIdea} onDeleteSuggestion={deleteSuggestion} onDeleteEvent={deleteEvent} />
           </div>
         </div>
 
@@ -956,7 +1034,9 @@ export default function PartnershipCalendarUI() {
             setForm={setForm}
             createSuggestion={createSuggestion}
             onEditIdea={openEditIdea}
+            onDeleteIdea={deleteIdea}
             onEditSuggestion={openEditSuggestion}
+            onDeleteSuggestion={deleteSuggestion}
           />
         </div>
       </div>
@@ -978,6 +1058,7 @@ export default function PartnershipCalendarUI() {
           setManualTags={setManualTags}
           selectedDayISO={selectedDayISO}
           onEditIdea={openEditIdea}
+          onDeleteIdea={deleteIdea}
         />
       </div>
 

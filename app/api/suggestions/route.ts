@@ -51,3 +51,15 @@ export async function PUT(req: Request) {
   await client.set(key, JSON.stringify(updated));
   return NextResponse.json(updated);
 }
+
+export async function DELETE(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body || !body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+  const client = await getRedisClient();
+  const key = `suggestion:${body.id}`;
+  const existing = await client.get(key);
+  if (!existing) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  await client.del(key);
+  try { await client.lRem(LIST_KEY, 0, body.id); } catch {}
+  return NextResponse.json({ ok: true });
+}
