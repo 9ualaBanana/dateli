@@ -17,6 +17,8 @@ export const IdeaSchema = z.object({
 export const SuggestionSchema = z.object({
   coupleToken: z.string().optional(),
   ideaId: z.string().min(1),
+  // mirror idea tags so suggestions carry topic metadata
+  tags: z.array(z.string()).optional(),
   startUtc: z.string().refine((s: string) => !Number.isNaN(Date.parse(s)), { message: 'Invalid date' }),
   endUtc: z.string().refine((s: string) => !Number.isNaN(Date.parse(s)), { message: 'Invalid date' }),
   titleOverride: z.string().optional(),
@@ -29,6 +31,8 @@ export const EventSchema = z.object({
   coupleToken: z.string().optional(),
   uid: z.string().optional(),
   suggestionId: z.string().optional(),
+  // events copy tags from the suggestion/idea for analytics
+  tags: z.array(z.string()).optional(),
   title: z.string().min(1),
   description: z.string().optional(),
   location: z.string().optional(),

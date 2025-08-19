@@ -21,7 +21,27 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 422 });
   const client = await getRedisClient();
   const id = uid();
-  const payload = { id, ...parsed.data };
+  // derive tags: prefer explicit, then suggestion, then idea
+  let tags = parsed.data.tags;
+  if ((!tags || tags.length === 0) && parsed.data.suggestionId) {
+    const sRaw = await client.get(`suggestion:${parsed.data.suggestionId}`);
+    if (sRaw) {
+      try {
+        const sObj = JSON.parse(sRaw) as { tags?: string[]; ideaId?: string };
+        if (Array.isArray(sObj.tags) && sObj.tags.length) tags = sObj.tags;
+        else if (sObj.ideaId) {
+          const iRaw = await client.get(`idea:${sObj.ideaId}`);
+          if (iRaw) {
+            try {
+              const iObj = JSON.parse(iRaw) as { tags?: string[] };
+              if (Array.isArray(iObj.tags) && iObj.tags.length) tags = iObj.tags;
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+  }
+  const payload = { id, ...parsed.data, tags };
   await client.set(`event:${id}`, JSON.stringify(payload));
   await client.rPush(LIST_KEY, id);
   return NextResponse.json(payload, { status: 201 });

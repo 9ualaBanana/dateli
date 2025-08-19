@@ -21,7 +21,20 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 422 });
   const client = await getRedisClient();
   const id = uid();
-  const payload = { id, ...parsed.data };
+  // if tags weren't supplied on the suggestion, try to copy tags from the idea
+  let tags = parsed.data.tags;
+  if ((!tags || tags.length === 0) && parsed.data.ideaId) {
+    const ideaRaw = await client.get(`idea:${parsed.data.ideaId}`);
+    if (ideaRaw) {
+      try {
+        const idea = JSON.parse(ideaRaw) as { tags?: string[] };
+        if (Array.isArray(idea.tags) && idea.tags.length) tags = idea.tags;
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }
+  const payload = { id, ...parsed.data, tags };
   await client.set(`suggestion:${id}`, JSON.stringify(payload));
   await client.rPush(LIST_KEY, id);
   return NextResponse.json(payload, { status: 201 });

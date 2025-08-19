@@ -27,7 +27,6 @@ type PlaceLink = {
   name: string;
   gmapsUrl: string; // deep link to Google Maps
 };
-
 type Idea = {
   id: string;
   source: "manual" | "ai";
@@ -40,24 +39,19 @@ type Idea = {
 type Suggestion = {
   id: string;
   ideaId: string;
-  start: string; // ISO
-  end: string;   // ISO
-  // optional overrides (if later you allow editing in the suggest modal)
+  start: string;
+  end: string;
   title?: string;
   description?: string;
   place?: PlaceLink;
-  votes: Record<string, "up" | "down" | undefined>; // partnerId -> vote
+  votes: Record<string, "up" | "down" | undefined>;
   status: "pending" | "accepted" | "cancelled";
 };
 
-// Event now only references the suggestion — no duplicated title/place/datetime
-// All render-time details come from the linked Suggestion (and its Idea)
-// → minimal source of truth, no repeated data.
 type EventItem = {
   id: string;
   suggestionId: string;
 };
-
 // Dummy partners (bearer-lite for UI)
 const PARTNERS = [
   { id: "A", name: "Artem" },
@@ -256,21 +250,22 @@ function MonthCalendar({ currentMonth, setCurrentMonth, events, suggestions, ide
 // COMPONENT: IdeaCard (shared between suggestions & upcoming)
 // -----------------------------------------------------------------------------
 
-function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea, onEditSuggestion }: {
-  suggestion: Suggestion;
+function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea, onEditSuggestion, onOpenSuggest, selectedDayISO }: {
+  suggestion?: Suggestion;
   idea?: Idea;
   partnerVote?: (sid: string, partnerId: string, vote: "up" | "down") => void;
   acceptSuggestion?: (sid: string) => void;
   onEditIdea?: (ideaId: string) => void;
   onEditSuggestion?: (suggestionId: string) => void;
+  onOpenSuggest?: (ideaId: string, dateIso?: string) => void;
+  selectedDayISO?: string | null;
 }) {
-  const upCount = Object.values(suggestion.votes).filter((v) => v === "up").length;
-  const downCount = Object.values(suggestion.votes).filter((v) => v === "down").length;
-  const info = getDisplayForSuggestion(suggestion, idea);
+  const upCount = suggestion ? Object.values(suggestion.votes).filter((v) => v === "up").length : 0;
+  const downCount = suggestion ? Object.values(suggestion.votes).filter((v) => v === "down").length : 0;
+  const info = suggestion ? getDisplayForSuggestion(suggestion, idea) : { title: idea?.title ?? "(Idea)", description: idea?.description, place: idea?.place, start: "", end: "" };
 
   return (
     <motion.div
-      key={suggestion.id}
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl border p-3"
@@ -289,12 +284,22 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
           {info.description && (
             <div className="text-sm text-muted-foreground mt-1">{info.description}</div>
           )}
-          <div className="text-xs text-muted-foreground mt-1 flex flex-col gap-1">
-            {/* row 1: date/time */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <CalendarIcon className="h-3.5 w-3.5" />
-              {format(parseISO(info.start), "EEE, MMM d • HH:mm")} – {format(parseISO(info.end), "HH:mm")}
+
+          {/* tags - show when idea has tags */}
+          {idea?.tags && idea.tags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {idea.tags.map(t => <Badge key={t} variant="outline">{t}</Badge>)}
             </div>
+          )}
+
+          <div className="text-xs text-muted-foreground mt-1 flex flex-col gap-1">
+            {/* row 1: date/time (only for suggestions) */}
+            {suggestion && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <CalendarIcon className="h-3.5 w-3.5" />
+                {format(parseISO(info.start), "EEE, MMM d • HH:mm")} – {format(parseISO(info.end), "HH:mm")}
+              </div>
+            )}
 
             {/* row 2: place (if any) */}
             {info.place && (
@@ -306,10 +311,9 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
           </div>
         </div>
 
-        {/* right: stacked partner votes + accept row (only shown in suggestions list) */}
-        {acceptSuggestion && partnerVote && (
+        {/* right: suggestion actions (votes + accept) OR idea actions (suggest/edit) */}
+        {suggestion && acceptSuggestion && partnerVote ? (
           <div className="w-36 shrink-0 flex flex-col gap-1">
-            {/* partner votes (one row per partner) */}
             <div className="flex flex-col gap-2">
               {PARTNERS.map((p) => (
                 <div key={p.id} className="flex items-center justify-between gap-1">
@@ -326,26 +330,34 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
               ))}
             </div>
 
-            {/* edit suggestion button */}
             <div className="pt-2 flex gap-2">
               <Button size="sm" variant="ghost" className="w-full" onClick={() => onEditSuggestion?.(suggestion.id)}>
                 <Edit className="mr-2 h-4 w-4" /> Edit
               </Button>
             </div>
 
-            {/* accept row (full-width button) */}
             <div className="pt-2 border-t">
               <Button size="sm" className="w-full" onClick={() => acceptSuggestion(suggestion.id)}>
                 <CheckCheck className="mr-2 h-4 w-4" /> Accept
               </Button>
             </div>
           </div>
-        )}
+        ) : idea ? (
+          <div className="shrink-0 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => onOpenSuggest?.(idea.id, selectedDayISO ?? format(new Date(), "yyyy-MM-dd"))}>
+                <Clock className="mr-2 h-4 w-4" /> Suggest
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      <div className="mt-2 text-xs text-muted-foreground">
-        Votes: <span className="text-foreground">{upCount}</span> up / {downCount} down
-      </div>
+      {suggestion && (
+        <div className="mt-2 text-xs text-muted-foreground">
+          Votes: <span className="text-foreground">{upCount}</span> up / {downCount} down
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -354,8 +366,41 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
 // COMPONENT: IdeasPanel
 // -----------------------------------------------------------------------------
 
+// Small tag editor: shows chips and an input to add tags. Controlled via value/setValue.
+function TagEditor({ value, setValue, placeholder = 'Add tag' }: { value: string[]; setValue: (v: string[]) => void; placeholder?: string }) {
+  const [input, setInput] = useState('');
+  const addTag = (t: string) => {
+    const clean = t.trim();
+    if (!clean) return;
+    if (value.includes(clean)) return;
+    setValue([...value, clean]);
+    setInput('');
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(input);
+    } else if (e.key === 'Backspace' && input === '') {
+      // remove last
+      setValue(value.slice(0, -1));
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {value.map(t => (
+        <div key={t} className="inline-flex items-center rounded-full border px-2 py-0.5 text-sm gap-2">
+          <span>{t}</span>
+          <button type="button" onClick={() => setValue(value.filter(x => x !== t))} aria-label={`Remove ${t}`} className="text-xs">✕</button>
+        </div>
+      ))}
+      <Input value={input} onChange={(e)=>setInput(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder} className="min-w-[8rem]" />
+      <Button size="sm" onClick={() => addTag(input)}>Add</Button>
+    </div>
+  );
+}
 
-function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTitle, setManualTitle, manualDescription, setManualDescription, manualPlace, setManualPlace, selectedDayISO, onEditIdea }: {
+
+function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTitle, setManualTitle, manualDescription, setManualDescription, manualPlace, setManualPlace, manualTags, setManualTags, selectedDayISO, onEditIdea }: {
   ideas: Idea[];
   onAddManual: () => void;
   onLoadAiIdeas: () => void;
@@ -366,6 +411,8 @@ function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTi
   setManualDescription: (s: string) => void;
   manualPlace?: PlaceLink;
   setManualPlace: (p?: PlaceLink) => void;
+  manualTags: string[];
+  setManualTags: (s: string[]) => void;
   selectedDayISO: string | null;
   onEditIdea?: (ideaId: string) => void;
 }) {
@@ -390,35 +437,11 @@ function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTi
           <TabsContent value="list" className="mt-3">
             <div className="flex flex-col gap-3">
               {ideas.map((idea) => (
-                <motion.div key={idea.id} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} className="rounded-2xl border p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-medium">{idea.title}</div>
-                      {idea.description && <div className="text-sm text-muted-foreground mt-1">{idea.description}</div>}
-                      <div className="mt-2 flex flex-wrap items-center gap-1">
-                        {idea.place && (
-                          <a href={idea.place.gmapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1">
-                            <Badge variant="secondary" className="flex items-center gap-1"><MapPin className="h-3 w-3"/>{idea.place.name}</Badge>
-                          </a>
-                        )}
-                        {idea.tags?.map(t => <Badge key={t} variant="outline">{t}</Badge>)}
-                        <Badge variant={idea.source === "ai" ? "default" : "outline"} className="ml-auto">{idea.source.toUpperCase()}</Badge>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => onOpenSuggest(idea.id, selectedDayISO ?? format(new Date(), "yyyy-MM-dd"))}>
-                        <Clock className="mr-2 h-4 w-4"/> Suggest
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => onEditIdea?.(idea.id)} title="Edit idea">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </motion.div>
+                <IdeaCard key={idea.id} idea={idea} onEditIdea={onEditIdea} onOpenSuggest={onOpenSuggest} selectedDayISO={selectedDayISO} />
               ))}
             </div>
           </TabsContent>
-          <TabsContent value="add" className="mt-3">
+      <TabsContent value="add" className="mt-3">
             <div className="grid gap-3">
               <Label>Title</Label>
               <Input value={manualTitle} onChange={(e)=>setManualTitle(e.target.value)} placeholder="E.g., Lantern-lit night walk"/>
@@ -426,6 +449,8 @@ function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTi
               <Textarea value={manualDescription} onChange={(e)=>setManualDescription(e.target.value)} placeholder="Optional details"/>
               <Label>Location (Google Maps)</Label>
               <LocationPicker value={manualPlace} onChange={setManualPlace} />
+  <Label>Tags</Label>
+  <TagEditor value={manualTags} setValue={setManualTags} placeholder="e.g. cozy" />
               <div className="flex justify-end">
                 <Button onClick={onAddManual}><Plus className="mr-2 h-4 w-4"/>Add idea</Button>
               </div>
@@ -628,6 +653,7 @@ export default function PartnershipCalendarUI() {
   const [manualTitle, setManualTitle] = useState("");
   const [manualDescription, setManualDescription] = useState("");
   const [manualPlace, setManualPlace] = useState<PlaceLink | undefined>(undefined);
+  const [manualTags, setManualTags] = useState<string[]>([]);
 
   // SUGGESTIONS / EVENTS (loaded from API)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -713,7 +739,7 @@ export default function PartnershipCalendarUI() {
   // Edit Idea modal
   const [editIdeaOpen, setEditIdeaOpen] = useState(false);
   const [editIdeaId, setEditIdeaId] = useState<string | null>(null);
-  const [editIdeaForm, setEditIdeaForm] = useState({ title: "", description: "", place: undefined as PlaceLink | undefined });
+  const [editIdeaForm, setEditIdeaForm] = useState({ title: "", description: "", place: undefined as PlaceLink | undefined, tags: [] as string[] });
 
   // Edit Suggestion modal
   const [editSuggestionOpen, setEditSuggestionOpen] = useState(false);
@@ -727,12 +753,13 @@ export default function PartnershipCalendarUI() {
     if (!manualTitle.trim()) return;
     (async ()=>{
       try{
-        const payload = { source: 'manual', title: manualTitle.trim(), description: manualDescription.trim() || undefined, location: manualPlace?.name };
+  const tags = manualTags.map(t => t.trim()).filter(Boolean);
+  const payload = { source: 'manual', title: manualTitle.trim(), description: manualDescription.trim() || undefined, location: manualPlace?.name, tags: tags.length ? tags : undefined };
         const res = await fetch('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const created = await res.json();
-        const idea: Idea = { id: created.id ?? created._id, source: created.source ?? 'manual', title: created.title, description: created.description, place: created.location ? { name: created.location, gmapsUrl: created.location } : undefined };
+  const idea: Idea = { id: created.id ?? created._id, source: created.source ?? 'manual', title: created.title, description: created.description, place: created.location ? { name: created.location, gmapsUrl: created.location } : undefined, tags: created.tags };
         setIdeas((prev) => [idea, ...prev]);
-        setManualTitle(""); setManualDescription(""); setManualPlace(undefined);
+  setManualTitle(""); setManualDescription(""); setManualPlace(undefined); setManualTags([]);
       }catch(e){console.error(e)}
     })();
   };
@@ -781,7 +808,7 @@ export default function PartnershipCalendarUI() {
   const openEditIdea = (ideaId: string) => {
     const i = findIdea(ideas, ideaId);
     if (!i) return;
-    setEditIdeaForm({ title: i.title, description: i.description ?? "", place: i.place });
+  setEditIdeaForm({ title: i.title, description: i.description ?? "", place: i.place, tags: i.tags ?? [] });
     setEditIdeaId(ideaId);
     setEditIdeaOpen(true);
   };
@@ -790,10 +817,10 @@ export default function PartnershipCalendarUI() {
     if (!editIdeaId) return;
     (async ()=>{
       try{
-        const payload = { id: editIdeaId, title: editIdeaForm.title, description: editIdeaForm.description || undefined, location: editIdeaForm.place?.name };
+    const payload = { id: editIdeaId, title: editIdeaForm.title, description: editIdeaForm.description || undefined, location: editIdeaForm.place?.name, tags: editIdeaForm.tags?.length ? editIdeaForm.tags : undefined };
         const res = await fetch('/api/ideas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const updated = await res.json();
-        setIdeas((prev) => prev.map(i => i.id === editIdeaId ? { id: updated.id ?? updated._id, source: updated.source ?? i.source, title: updated.title, description: updated.description, place: updated.location ? { name: updated.location, gmapsUrl: updated.location } : editIdeaForm.place } : i));
+    setIdeas((prev) => prev.map(i => i.id === editIdeaId ? { id: updated.id ?? updated._id, source: updated.source ?? i.source, title: updated.title, description: updated.description, place: updated.location ? { name: updated.location, gmapsUrl: updated.location } : editIdeaForm.place, tags: updated.tags ?? editIdeaForm.tags } : i));
       }catch(e){console.error(e)}
       setEditIdeaOpen(false);
       setEditIdeaId(null);
@@ -947,6 +974,8 @@ export default function PartnershipCalendarUI() {
           setManualDescription={setManualDescription}
           manualPlace={manualPlace}
           setManualPlace={setManualPlace}
+          manualTags={manualTags}
+          setManualTags={setManualTags}
           selectedDayISO={selectedDayISO}
           onEditIdea={openEditIdea}
         />
@@ -965,6 +994,8 @@ export default function PartnershipCalendarUI() {
             <Textarea value={editIdeaForm.description} onChange={(e)=>setEditIdeaForm({...editIdeaForm, description: e.target.value})} />
             <Label>Location (Google Maps)</Label>
             <LocationPicker value={editIdeaForm.place} onChange={(p)=>setEditIdeaForm({...editIdeaForm, place: p})} />
+            <Label>Tags</Label>
+            <TagEditor value={editIdeaForm.tags || []} setValue={(v)=>setEditIdeaForm({...editIdeaForm, tags: v})} placeholder="cozy" />
           </div>
           <DialogFooter className="mt-4">
             <Button variant="outline" onClick={()=>setEditIdeaOpen(false)}>Cancel</Button>
