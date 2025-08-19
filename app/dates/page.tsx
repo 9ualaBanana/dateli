@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import { format, addMonths, subMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, parseISO } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Sparkles, ThumbsUp, ThumbsDown, Calendar as CalendarIcon, Clock, MapPin, CheckCheck, X, ChevronLeft, ChevronRight, Link as LinkIcon, Edit } from "lucide-react";
@@ -64,7 +64,13 @@ const PARTNERS = [
   { id: "B", name: "Eli" },
 ];
 
-// Seed ideas
+// DEPRECATED: seed ideas
+// The inline `seedIdeas` array was used for local UI prototyping. It is
+// intentionally retained here for reference only and should not be used at
+// runtime. New installations should load ideas from the server via
+// `/api/ideas`. The application now initializes `ideas` to an empty array.
+// NOTE: safe to remove this block once you no longer need the example data.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const seedIdeas: Idea[] = [
   { id: "i1", source: "manual", title: "Sunset picnic by the river", tags: ["outdoor", "sunset"], place: { name: "Riverside Park", gmapsUrl: "https://www.google.com/maps/search/?api=1&query=Riverside%20Park" } },
   { id: "i2", source: "ai", title: "Film photo mini-mission", tags: ["creative", "city"], description: "36 shots challenge around the old town." },
@@ -348,6 +354,7 @@ function IdeaCard({ suggestion, idea, partnerVote, acceptSuggestion, onEditIdea,
 // COMPONENT: IdeasPanel
 // -----------------------------------------------------------------------------
 
+
 function IdeasPanel({ ideas, onAddManual, onLoadAiIdeas, onOpenSuggest, manualTitle, setManualTitle, manualDescription, setManualDescription, manualPlace, setManualPlace, selectedDayISO, onEditIdea }: {
   ideas: Idea[];
   onAddManual: () => void;
@@ -615,14 +622,83 @@ function UpcomingList({ ideas, suggestions, events }: { ideas: Idea[]; suggestio
 
 export default function PartnershipCalendarUI() {
   // IDEAS
-  const [ideas, setIdeas] = useState<Idea[]>(seedIdeas);
+  // Start with an empty list; ideas are loaded from the server on mount.
+  // The legacy `seedIdeas` constant above is kept for reference only.
+  const [ideas, setIdeas] = useState<Idea[]>([]);
   const [manualTitle, setManualTitle] = useState("");
   const [manualDescription, setManualDescription] = useState("");
   const [manualPlace, setManualPlace] = useState<PlaceLink | undefined>(undefined);
 
-  // SUGGESTIONS / EVENTS (local state for now)
+  // SUGGESTIONS / EVENTS (loaded from API)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
+  // Debug: last fetch error for initial load
+  const [lastFetchError, setLastFetchError] = useState<string | null>(null);
+
+  // Load initial data from API
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const fetchJson = async (url: string) => {
+          const r = await fetch(url);
+          let body: unknown;
+          try {
+            body = await r.json();
+          } catch (err) {
+            const text = await r.text();
+            console.error('Failed to parse JSON from', url, 'responseText=', text);
+            throw err;
+          }
+          if (!r.ok) console.error('Fetch failed', url, 'status=', r.status, 'body=', body);
+          return body;
+        };
+
+        const [ideasRes, suggRes, evRes] = await Promise.all([
+          fetchJson('/api/ideas'),
+          fetchJson('/api/suggestions'),
+          fetchJson('/api/events'),
+        ]);
+
+        if (!mounted) return;
+
+        // normalize ideas
+        if (Array.isArray(ideasRes)) {
+          setIdeas(ideasRes.map((i: unknown) => {
+            const it = i as unknown as Record<string, unknown>;
+            return { id: it.id ?? it._id, source: it.source ?? 'manual', title: it.title, description: it.description, place: it.location ? { name: it.location, gmapsUrl: it.location } : undefined, tags: it.tags } as Idea;
+          }));
+        } else {
+          console.warn('Ideas response is not an array', ideasRes);
+        }
+
+        // normalize suggestions (map startUtc/endUtc)
+        if (Array.isArray(suggRes)) {
+          setSuggestions(suggRes.map((s: unknown) => {
+            const ss = s as unknown as Record<string, unknown>;
+            return { id: ss.id ?? ss._id, ideaId: ss.ideaId, start: ss.startUtc ?? ss.start, end: ss.endUtc ?? ss.end, title: ss.titleOverride ?? ss.title, description: ss.descriptionOverride ?? ss.description, place: ss.locationOverride ? { name: ss.locationOverride, gmapsUrl: ss.locationOverride } : undefined, votes: ss.votes ?? {}, status: ss.status ?? 'pending' } as Suggestion;
+          }));
+        } else {
+          console.warn('Suggestions response is not an array', suggRes);
+        }
+
+        // normalize events
+        if (Array.isArray(evRes)) {
+          setEvents(evRes.map((e: unknown) => {
+            const ee = e as unknown as Record<string, unknown>;
+            return { id: ee.id ?? ee._id ?? ee.uid ?? uid(), suggestionId: ee.suggestionId } as EventItem;
+          }));
+        } else {
+          console.warn('Events response is not an array', evRes);
+        }
+      } catch (err) {
+        console.error('Failed to load data', err);
+        setLastFetchError(String(err ?? 'unknown'));
+      }
+    }
+    load();
+    return () => { mounted = false; };
+  }, []);
 
   // Calendar
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
@@ -649,18 +725,35 @@ export default function PartnershipCalendarUI() {
   // Handlers
   const addManualIdea = () => {
     if (!manualTitle.trim()) return;
-    const newIdea: Idea = { id: uid(), source: "manual", title: manualTitle.trim(), description: manualDescription.trim() || undefined, place: manualPlace };
-    setIdeas((prev) => [newIdea, ...prev]);
-    setManualTitle(""); setManualDescription(""); setManualPlace(undefined);
+    (async ()=>{
+      try{
+        const payload = { source: 'manual', title: manualTitle.trim(), description: manualDescription.trim() || undefined, location: manualPlace?.name };
+        const res = await fetch('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const created = await res.json();
+        const idea: Idea = { id: created.id ?? created._id, source: created.source ?? 'manual', title: created.title, description: created.description, place: created.location ? { name: created.location, gmapsUrl: created.location } : undefined };
+        setIdeas((prev) => [idea, ...prev]);
+        setManualTitle(""); setManualDescription(""); setManualPlace(undefined);
+      }catch(e){console.error(e)}
+    })();
   };
 
   const loadAiIdeas = () => {
-    const pool: Idea[] = [
-      { id: uid(), source: "ai", title: "Storm-watching coffee date", tags: ["rain", "cozy"] },
-      { id: uid(), source: "ai", title: "Sunrise beach stretch", tags: ["outdoor", "sunrise"], place: { name: "My Khe Beach", gmapsUrl: "https://www.google.com/maps/search/?api=1&query=My%20Khe%20Beach" } },
-      { id: uid(), source: "ai", title: "Puzzle & pasta night", tags: ["home", "cozy"] },
+    const pool = [
+      { source: 'ai', title: 'Storm-watching coffee date', tags: ['rain','cozy'] },
+      { source: 'ai', title: 'Sunrise beach stretch', tags: ['outdoor','sunrise'], location: 'My Khe Beach' },
+      { source: 'ai', title: 'Puzzle & pasta night', tags: ['home','cozy'] },
     ];
-    setIdeas((prev) => [...pool, ...prev]);
+    (async()=>{
+      try{
+        const created: Idea[] = [];
+        for(const p of pool){
+          const res = await fetch('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+          const body = await res.json();
+          created.push({ id: body.id ?? body._id, source: body.source ?? 'ai', title: body.title, description: body.description, place: body.location ? { name: body.location, gmapsUrl: body.location } : undefined, tags: body.tags });
+        }
+        setIdeas((prev)=> [...created, ...prev]);
+      }catch(e){console.error(e)}
+    })();
   };
 
   const openSuggestForIdea = (ideaId: string, dateIso?: string) => {
@@ -695,9 +788,16 @@ export default function PartnershipCalendarUI() {
 
   const saveEditIdea = () => {
     if (!editIdeaId) return;
-    setIdeas((prev) => prev.map(i => i.id === editIdeaId ? { ...i, title: editIdeaForm.title, description: editIdeaForm.description || undefined, place: editIdeaForm.place } : i));
-    setEditIdeaOpen(false);
-    setEditIdeaId(null);
+    (async ()=>{
+      try{
+        const payload = { id: editIdeaId, title: editIdeaForm.title, description: editIdeaForm.description || undefined, location: editIdeaForm.place?.name };
+        const res = await fetch('/api/ideas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const updated = await res.json();
+        setIdeas((prev) => prev.map(i => i.id === editIdeaId ? { id: updated.id ?? updated._id, source: updated.source ?? i.source, title: updated.title, description: updated.description, place: updated.location ? { name: updated.location, gmapsUrl: updated.location } : editIdeaForm.place } : i));
+      }catch(e){console.error(e)}
+      setEditIdeaOpen(false);
+      setEditIdeaId(null);
+    })();
   };
 
   // Open edit suggestion modal
@@ -716,20 +816,35 @@ export default function PartnershipCalendarUI() {
 
   const saveEditSuggestion = () => {
     if (!editSuggestionId) return;
-    const startISO = new Date(`${editSuggestionForm.date}T${editSuggestionForm.startTime}:00`).toISOString();
-    const endISO = new Date(`${editSuggestionForm.date}T${editSuggestionForm.endTime}:00`).toISOString();
-    setSuggestions((prev) => prev.map(s => s.id === editSuggestionId ? { ...s, ideaId: editSuggestionForm.ideaId, start: startISO, end: endISO, title: editSuggestionForm.title || undefined, description: editSuggestionForm.description || undefined, place: editSuggestionForm.place } : s));
-    setEditSuggestionOpen(false);
-    setEditSuggestionId(null);
+    (async ()=>{
+      try{
+        const startISO = new Date(`${editSuggestionForm.date}T${editSuggestionForm.startTime}:00`).toISOString();
+        const endISO = new Date(`${editSuggestionForm.date}T${editSuggestionForm.endTime}:00`).toISOString();
+        const payload = { id: editSuggestionId, ideaId: editSuggestionForm.ideaId, startUtc: startISO, endUtc: endISO, titleOverride: editSuggestionForm.title || undefined, descriptionOverride: editSuggestionForm.description || undefined, locationOverride: editSuggestionForm.place?.name };
+        const res = await fetch('/api/suggestions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const updated = await res.json();
+        setSuggestions((prev) => prev.map(s => s.id === editSuggestionId ? { id: updated.id ?? updated._id, ideaId: updated.ideaId, start: updated.startUtc ?? updated.start, end: updated.endUtc ?? updated.end, title: updated.titleOverride ?? s.title, description: updated.descriptionOverride ?? s.description, place: updated.locationOverride ? { name: updated.locationOverride, gmapsUrl: updated.locationOverride } : s.place, votes: s.votes, status: updated.status ?? s.status } : s));
+      }catch(e){console.error(e)}
+      setEditSuggestionOpen(false);
+      setEditSuggestionId(null);
+    })();
   };
 
   const createSuggestion = () => {
     if (!form.ideaId || !form.date || !form.startTime || !form.endTime) return;
-    const startISO = new Date(`${form.date}T${form.startTime}:00`).toISOString();
-    const endISO = new Date(`${form.date}T${form.endTime}:00`).toISOString();
-    const s: Suggestion = { id: uid(), ideaId: form.ideaId, start: startISO, end: endISO, place: form.place, votes: {}, status: "pending" };
-    setSuggestions((prev) => [s, ...prev]);
-    setOpenSuggest(false);
+    (async ()=>{
+      try{
+        const startISO = new Date(`${form.date}T${form.startTime}:00`).toISOString();
+        const endISO = new Date(`${form.date}T${form.endTime}:00`).toISOString();
+  const payload = { ideaId: form.ideaId, startUtc: startISO, endUtc: endISO } as Record<string, unknown>;
+        if (form.place) payload.locationOverride = form.place.name;
+        const res = await fetch('/api/suggestions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const created = await res.json();
+        const mapped: Suggestion = { id: created.id ?? created._id, ideaId: created.ideaId, start: created.startUtc ?? created.start, end: created.endUtc ?? created.end, title: created.titleOverride ?? undefined, description: created.descriptionOverride ?? undefined, place: created.locationOverride ? { name: created.locationOverride, gmapsUrl: created.locationOverride } : undefined, votes: {}, status: created.status ?? 'pending' };
+        setSuggestions((prev) => [mapped, ...prev]);
+      }catch(e){console.error(e)}
+      setOpenSuggest(false);
+    })();
   };
 
   const partnerVote = (sid: string, partnerId: string, vote: "up" | "down") => {
@@ -737,12 +852,30 @@ export default function PartnershipCalendarUI() {
   };
 
   const acceptSuggestion = (sid: string) => {
-    const s = suggestions.find(s => s.id === sid);
-    if (!s) return;
-    // Mark accepted
-    setSuggestions((prev) => prev.map(ss => ss.id === sid ? { ...ss, status: "accepted" } : ss));
-    // Create event that only references the suggestion (no duplicated data)
-    setEvents((prev) => [{ id: uid(), suggestionId: sid }, ...prev]);
+    (async ()=>{
+      try{
+        const s = suggestions.find(s => s.id === sid);
+        if (!s) return;
+        // update suggestion status
+        await fetch('/api/suggestions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: sid, status: 'accepted' }) });
+        setSuggestions((prev) => prev.map(ss => ss.id === sid ? { ...ss, status: 'accepted' } : ss));
+
+        // create event referencing the suggestion
+        const idea = findIdea(ideas, s.ideaId);
+        const eventTitle = s.title ?? idea?.title ?? 'Untitled event';
+        const evPayload: Record<string, unknown> = {
+          title: eventTitle,
+          description: s.description ?? idea?.description ?? undefined,
+          location: s.place?.name ?? idea?.place?.name ?? undefined,
+          startUtc: s.start,
+          endUtc: s.end,
+          suggestionId: sid,
+        };
+        const evRes = await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(evPayload) });
+        const createdEv = await evRes.json();
+        setEvents((prev) => [{ id: createdEv.id ?? createdEv._id ?? createdEv.uid ?? uid(), suggestionId: createdEv.suggestionId ?? sid }, ...prev]);
+      }catch(e){console.error(e)}
+    })();
   };
 
   const pendingSuggestions = suggestions.filter(s => s.status === "pending");
@@ -752,6 +885,14 @@ export default function PartnershipCalendarUI() {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Daeli</h1>
         <div className="text-sm text-muted-foreground">UI-only prototype • de-duplicated data</div>
+      </div>
+
+      {/* Debug status */}
+      <div className="mb-4 text-xs text-muted-foreground flex items-center gap-4">
+        <div>Ideas: <span className="font-medium text-foreground">{ideas.length}</span></div>
+        <div>Suggestions: <span className="font-medium text-foreground">{suggestions.length}</span></div>
+        <div>Events: <span className="font-medium text-foreground">{events.length}</span></div>
+        {lastFetchError && <div className="text-destructive">Load error: {lastFetchError}</div>}
       </div>
 
       {/* First row: Suggestions + Calendar */}
