@@ -61,7 +61,7 @@ type EventItem = {
 // Dummy partners (bearer-lite for UI)
 const PARTNERS = [
   { id: "A", name: "Artem" },
-  { id: "B", name: "Eli" },
+  { id: "B", name: "Eli🐈‍⬛💞🥺" },
 ];
 
 // DEPRECATED: seed ideas
